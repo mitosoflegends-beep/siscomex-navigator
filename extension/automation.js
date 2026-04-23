@@ -137,13 +137,36 @@
     el.dispatchEvent(ev);
   }
 
-  async function clickEl(el) {
+  function firePointer(el, type) {
+    if (typeof PointerEvent !== "function") return;
+    const r = el.getBoundingClientRect();
+    const ev = new PointerEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      view: el.ownerDocument.defaultView || window,
+      clientX: r.left + r.width / 2,
+      clientY: r.top + r.height / 2,
+      pointerId: 1,
+      pointerType: "mouse",
+      isPrimary: true,
+    });
+    el.dispatchEvent(ev);
+  }
+
+  async function hoverEl(el) {
     el.scrollIntoView({ block: "center", inline: "center" });
-    await sleep(200);
+    await sleep(150);
+    firePointer(el, "pointerover");
+    firePointer(el, "pointerenter");
     fireMouse(el, "mouseover");
     fireMouse(el, "mouseenter");
-    await sleep(120);
     fireMouse(el, "mousemove");
+    try { el.focus?.(); } catch (e) {}
+  }
+
+  async function clickEl(el) {
+    await hoverEl(el);
+    await sleep(120);
     fireMouse(el, "mousedown");
     fireMouse(el, "mouseup");
     fireMouse(el, "click");
@@ -207,47 +230,102 @@
     return null;
   }
 
+  async function hoverAndExpand(parentLabel, parentTexts, childTexts, opts = {}) {
+    const { retries = 4, waitChild = 5000 } = opts;
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      log(`🧭 [${attempt}/${retries}] Procurando aba: ${parentLabel}`);
+      const parent = await waitFor(parentTexts, 10000);
+      if (!parent) {
+        log("Aba não encontrada, tentando abrir sidebar...");
+        await tryOpenSidebar();
+        continue;
+      }
+
+      log(`🖱️ Passando mouse na aba: ${parentLabel}`, parent);
+      await hoverEl(parent);
+      await sleep(700);
+
+      let child = await waitFor(childTexts, waitChild);
+      if (child) {
+        log("✅ Submenu apareceu via hover");
+        return child;
+      }
+
+      log("Submenu não apareceu com hover; tentando clique na aba...");
+      await clickEl(parent);
+      await sleep(700);
+      child = await waitFor(childTexts, waitChild);
+      if (child) {
+        log("✅ Submenu apareceu via clique");
+        return child;
+      }
+
+      try {
+        parent.dispatchEvent(new KeyboardEvent("keydown", {
+          bubbles: true,
+          cancelable: true,
+          key: "ArrowDown",
+        }));
+      } catch (e) {}
+      await sleep(500);
+      child = await waitFor(childTexts, 1800);
+      if (child) {
+        log("✅ Submenu apareceu via teclado");
+        return child;
+      }
+    }
+    return null;
+  }
+
   try {
     log("Iniciando. URL:", location.href);
     await sleep(500);
     await tryOpenSidebar();
 
-    // Passo 1: clicar Importação e esperar "Declaração..." aparecer
-    const decl = await clickAndExpand(
-      "Importação",
-      ["importacao", "importação"],
-      [
-        "declaracao unica de importacao",
-        "declaração única de importação",
-        "declaracao de importacao",
-        "declaração de importação",
-        "duimp",
-      ],
-      { retries: 3, waitChild: 8000 }
-    );
-    if (!decl) {
-      alert("[Siscomex Auto] Não consegui abrir o submenu de Importação.");
-      throw new Error("submenu importação");
-    }
+    const consultarTexts = ["consultar duimp", "consultar a duimp", "consulta duimp"];
 
-    // Passo 2: clicar Declaração... e esperar "Consultar Duimp" aparecer
-    log(`👆 Clicando: Declaração Única de Importação`, decl);
-    await clickEl(decl);
-    await sleep(700);
-
-    let consultar = await waitFor(
-      ["consultar duimp", "consultar a duimp", "consulta duimp", "consultar"],
-      8000
-    );
+    let consultar = await waitFor(consultarTexts, 1500);
     if (!consultar) {
-      log("Submenu de Declaração não apareceu — re-clicando");
-      await clickEl(decl);
-      await sleep(700);
-      consultar = await waitFor(
-        ["consultar duimp", "consultar a duimp", "consulta duimp"],
-        8000
+      consultar = await hoverAndExpand(
+        "Declaração Única de Importação",
+        [
+          "declaracao unica de importacao",
+          "declaração única de importação",
+          "declaracao de importacao",
+          "declaração de importação",
+        ],
+        consultarTexts,
+        { retries: 4, waitChild: 4500 }
       );
     }
+
+    if (!consultar) {
+      log("Fallback: tentando fluxo antigo via menu Importação > Declaração...");
+      const decl = await clickAndExpand(
+        "Importação",
+        ["importacao", "importação"],
+        [
+          "declaracao unica de importacao",
+          "declaração única de importação",
+          "declaracao de importacao",
+          "declaração de importação",
+        ],
+        { retries: 3, waitChild: 8000 }
+      );
+      if (decl) {
+        log(`👆 Clicando: Declaração Única de Importação`, decl);
+        await clickEl(decl);
+        await sleep(700);
+        consultar = await waitFor(consultarTexts, 8000);
+        if (!consultar) {
+          log("Submenu de Declaração não apareceu — re-clicando");
+          await clickEl(decl);
+          await sleep(700);
+          consultar = await waitFor(consultarTexts, 8000);
+        }
+      }
+    }
+
     if (!consultar) {
       alert("[Siscomex Auto] Não encontrei 'Consultar Duimp' no submenu.\nAbra o console (F12) e me envie os logs.");
       throw new Error("consultar duimp");
