@@ -47,16 +47,25 @@
     for (let i = 0; i < 8 && cur; i++) {
       const tag = (cur.tagName || "").toLowerCase();
       const role = cur.getAttribute?.("role");
+      const cls = norm(cur.className?.toString());
+      const hasSubmenu = !!cur.querySelector?.("ul, [role='menu'], .submenu, .dropdown-menu");
       if (
         tag === "a" ||
+        tag === "li" ||
         tag === "button" ||
         role === "button" ||
         role === "menuitem" ||
         role === "treeitem" ||
+        role === "tab" ||
         cur.onclick ||
         cur.classList?.contains("clickable") ||
         cur.hasAttribute?.("ng-click") ||
-        cur.hasAttribute?.("(click)")
+        cur.hasAttribute?.("(click)") ||
+        cls.includes("menu") ||
+        cls.includes("submenu") ||
+        cls.includes("tab") ||
+        cls.includes("dropdown") ||
+        hasSubmenu
       ) {
         return cur;
       }
@@ -92,17 +101,30 @@
   function findInRoot(root, targets) {
     const all = root.querySelectorAll("*");
     let best = null;
-    let bestLen = Infinity;
+    let bestScore = -Infinity;
     for (const el of all) {
       if (!isVisible(el)) continue;
       if (!matchesText(el, targets)) continue;
-      const tlen = elementText(el).length;
-      if (tlen > 0 && tlen < bestLen) {
-        best = el;
-        bestLen = tlen;
+      const wrapped = clickableAncestor(el);
+      const tag = (wrapped?.tagName || el.tagName || "").toLowerCase();
+      const cls = norm((wrapped?.className || el.className || "").toString());
+      const txt = elementText(el);
+      const exact = targets.some((t) => txt === t);
+      const hasSubmenu = !!wrapped?.querySelector?.("ul, [role='menu'], .submenu, .dropdown-menu");
+      const score =
+        (exact ? 1000 : 0) +
+        (hasSubmenu ? 250 : 0) +
+        (tag === "li" ? 150 : 0) +
+        (tag === "a" ? 120 : 0) +
+        (cls.includes("menu") ? 80 : 0) +
+        (cls.includes("tab") ? 80 : 0) +
+        Math.max(0, 120 - txt.length);
+      if (score > bestScore) {
+        best = wrapped || el;
+        bestScore = score;
       }
     }
-    return best ? clickableAncestor(best) : null;
+    return best || null;
   }
 
   function findOne(texts) {
